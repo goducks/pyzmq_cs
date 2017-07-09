@@ -1,52 +1,85 @@
 import zmq
 import time
+import uuid
 from threading import Thread
 from optparse import OptionParser
 
 class Client():
+    greet = b"hello"
+
     def __init__(self, server_port):
         context = zmq.Context().instance()
         self.socket = context.socket(zmq.DEALER)
-        self.socket.setsockopt(zmq.IDENTITY, b'A')
+        # generate a universally unique client ID
+        self.id = uuid.uuid4()
+        self.socket.setsockopt(zmq.IDENTITY, str(self.id))
         self.socket.connect("tcp://localhost:%s" % server_port)
-        print "Client: " + b'A' + " connected to port: " + str(server_port)
+        # send connection message that will register server with client
+        self.socket.send(Client.greet)
+        print "Client: " + str(self.id) + " connected to port: " + str(server_port)
 
     def run(self):
         total = 0
-        print "Client run start"
+        print "Client: start"
         while True:
-            self.socket.send(b"ready")
             # We receive one part, with the workload
             request = self.socket.recv()
-            print "client received: " + request
+            print "Client: received " + request
             finished = request == b"END"
             if finished:
-                print("A received: %s" % total)
+                print("Client: total messages received: %s" % total)
                 break
             total += 1
-        print "client run end"
+        print "Client: end"
 
 class Server():
+    # dictionary of connected clients where
+    # key = client assigned identity
+    # value = 4 element nested dict of:
+    #    imc = incoming message count
+    #    ibr = incoming bytes recv'd,
+    #    omc = outgoing message count
+    #    obs = outgoing bytes sent
+
     def __init__(self, server_port):
         context = zmq.Context().instance()
         self.socket = context.socket(zmq.ROUTER)
         self.socket.bind("tcp://*:%s" % server_port)
+        self.clientmap = dict()
         print "Server bound to port: " + str(server_port)
 
     def run(self):
-        print "Server run start"
-        identity, bounce = self.socket.recv_multipart()
-        print "server received from: " + identity + ", message: " + bounce
+        print "Server: start"
+
+        identity, data = self.socket.recv_multipart()
+        if not identity in self.clientmap:
+            if not data == Client.greet:
+                print "Server: recv'd message from unregistered client"
+            else:
+                self.clientmap[identity] = { 'imc' : 1, 'ibr' : len(Client.greet), 'omc': 0, 'obs' : 0 }
+                print self.clientmap
+        elif data == Client.greet:
+            print "Server: recv'd duplicate registered client"
+        else:
+            print "Server: handle message normally"
 
         for _ in range(10):
-            # Send two message parts, first the address
-            ident = b'A'
-            # And then the workload
-            work = b"Workload"
-            self.socket.send_multipart([ident, work])
+            for id, usage in self.clientmap.iteritems():
+                # Send two message parts, first the address
+                # And then the workload
+                work = b"Workload"
+                self.socket.send_multipart([id, work])
+                usage['omc'] += 1
+                usage['obs'] += len(work)
 
-        self.socket.send_multipart([b'A', b'END'])
-        print "server run end"
+        for id, usage in self.clientmap.iteritems():
+            self.socket.send_multipart([id, b'END'])
+            usage['omc'] += 1
+            usage['obs'] += len(work)
+
+        print "Server: end"
+        print "Server: client stats"
+        print self.clientmap
 
 if __name__ == "__main__":
     # set up command line arguments using optparse library
