@@ -4,8 +4,14 @@ import uuid
 from threading import Thread
 from optparse import OptionParser
 
+class Proto():
+    # this is just a namespace for storing protocol IDs
+    # TODO: this is ghetto
+    greet =     str(0x00000001)
+    kill =      str(0x0000000A)
+
 class Client():
-    greet = b"hello"
+    # client registration string
 
     def __init__(self, server_port):
         context = zmq.Context().instance()
@@ -15,7 +21,7 @@ class Client():
         self.socket.setsockopt(zmq.IDENTITY, str(self.id))
         self.socket.connect("tcp://localhost:%s" % server_port)
         # send connection message that will register server with client
-        self.socket.send(Client.greet)
+        self.socket.send(Proto.greet)
         print "Client: " + str(self.id) + " connected to port: " + str(server_port)
 
     def run(self):
@@ -25,7 +31,7 @@ class Client():
             # We receive one part, with the workload
             request = self.socket.recv()
             print "Client: received " + request
-            finished = request == b"END"
+            finished = request == Proto.kill
             if finished:
                 print("Client: total messages received: %s" % total)
                 break
@@ -33,7 +39,7 @@ class Client():
         print "Client: end"
 
 class Server():
-    # dictionary of connected clients where
+    # To track clients, use dictionary of connections where:
     # key = client assigned identity
     # value = 4 element nested dict of:
     #    imc = incoming message count
@@ -51,35 +57,45 @@ class Server():
     def run(self):
         print "Server: start"
 
-        identity, data = self.socket.recv_multipart()
-        if not identity in self.clientmap:
-            if not data == Client.greet:
+        id, data = self.socket.recv_multipart()
+        # Check for new clients first
+        if not id in self.clientmap:
+            if not data == Proto.greet:
                 print "Server: recv'd message from unregistered client"
+                # TODO: debug
             else:
-                self.clientmap[identity] = { 'imc' : 1, 'ibr' : len(Client.greet), 'omc': 0, 'obs' : 0 }
+                print "Server: registering new client"
+                self.clientmap[id] = { 'imc' : 1, 'ibr' : len(Proto.greet), 'omc': 0, 'obs' : 0 }
                 print self.clientmap
-        elif data == Client.greet:
+        elif data == Proto.greet:
             print "Server: recv'd duplicate registered client"
+            # TODO: debug
         else:
             print "Server: handle message normally"
+            self.parsemsg(id, data)
 
         for _ in range(10):
-            for id, usage in self.clientmap.iteritems():
+            for id in self.clientmap.iterkeys():
                 # Send two message parts, first the address
                 # And then the workload
                 work = b"Workload"
-                self.socket.send_multipart([id, work])
-                usage['omc'] += 1
-                usage['obs'] += len(work)
+                self.send(id, work)
 
-        for id, usage in self.clientmap.iteritems():
-            self.socket.send_multipart([id, b'END'])
-            usage['omc'] += 1
-            usage['obs'] += len(work)
+        for id in self.clientmap.iterkeys():
+            self.send(id, Proto.kill)
 
-        print "Server: end"
         print "Server: client stats"
         print self.clientmap
+        print "Server: end"
+
+    def send(self, id, data):
+        self.socket.send_multipart([id, data])
+        usage = self.clientmap[id]
+        usage['omc'] += 1
+        usage['obs'] += len(data)
+
+    def parsemsg(self, id, data):
+        pass
 
 if __name__ == "__main__":
     # set up command line arguments using optparse library
