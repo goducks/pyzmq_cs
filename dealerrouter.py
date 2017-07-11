@@ -257,11 +257,10 @@ if __name__ == "__main__":
         client.run()
     else:
         print "--client and server mode--"
-        # start both
+        # start server
         server = Server(server_port)
+        Thread(target=server.run, args=['options.runtime']).start()
+        time.sleep(1)
         client = Client(server_port)
-        time.sleep(0.1)
-        print "starting run threads"
         Thread(target=client.run, args='').start()
-        Thread(target=server.run, args='options.runtime').start()
 ###############################################################################
